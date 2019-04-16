@@ -25,6 +25,25 @@ load_map_bC_Count: .word 0 #Counter for coords
 
 newLine: .asciiz "\n"
 
+#####_COLORS_#######
+.eqv BLACK 0x00
+.eqv RED 0X01
+.eqv GREEN 0x02
+.eqv BROWN 0x03
+.eqv BLUE 0x04
+.eqv MAGENTA 0x05
+.eqv CYAN 0x06 
+.eqv GRAY 0x07
+.eqv DARK_GRAY 0x08 
+.eqv BRIGHT_RED 0x09 
+.eqv BRIGHT_GREEN 0x0A 
+.eqv YELLOW 0x0B 
+.eqv BRIGHT_BLUE 0x0C 
+.eqv BRIGHT_MAGENTA 0x0D 
+.eqv BRIGHT_CYAN 0x0E 
+.eqv WHITE 0x0F
+###################
+
 .macro printChar(%ch)
 	li $v0, 11
 	la $a0, %ch
@@ -55,7 +74,7 @@ newLine: .asciiz "\n"
 	syscall
 .end_macro
 
-.macro updateCellDisp(%row, %col, %char, %color)
+.macro updateCellDisplay(%row, %col, %char, %color)
 	li $v0, 20
 	mul $a0, $v0, %row # a0 = row * 20
 	sll $a1, %col, 1 #a1 = col * 2
@@ -112,7 +131,24 @@ newLine: .asciiz "\n"
 	sb $a1, (%addressOffset) #Store info back into cell
 .end_macro
 
+.macro setColor(%bgVal, %fgVal, %color)
+	
+	li $a0 %bgVal #Using arg0 as temp
+	li $a1, %fgVal #Using arg1 as temp
+	bindColorValues($a0, $a1, %color)
+.end_macro
 
+.macro bindColorValues(%bgReg, %fgReg, %color)
+	
+	move $a0, %bgReg
+	move $a1, %fgReg
+	sll $a2, $a0, 4 #Background value is multiplied by 16 so it is now within the high order bits.
+	
+	andi $a2, $a2, 0xF0 #Clear out bg low-order bits for fg.
+	andi $a1, $a1, 0x0F #Clear out fg high-order bits for bg.
+	
+	or %color, $a2, $a1 #%color = [bg - 4bits][fg - 4bits] (Combined value)
+.end_macro
 #place any additional data declarations here
 
 #############################################
@@ -131,7 +167,7 @@ smiley:
     #s1 = null char
     #s2 = background/foreground color byte
     li $s1, '\0'
-    li $s2, 0xF
+    setColor(BLACK, WHITE, $s2)
     ############################
     
     
@@ -145,7 +181,7 @@ smiley:
     	s_rInnerLoop:
     		bgt $t1, 9, s_rLIncrement #inner loop finished, increment outerloop and repeat.
     		#t0 = row, t1 = col
-    		updateCellDisp($t0, $t1, $s1, $s2)
+    		updateCellDisplay($t0, $t1, $s1, $s2)
     		#increment and repeat
     		addi $t1, $t1, 1 #t1 = j++;
     		j s_rInnerLoop
@@ -162,7 +198,7 @@ smiley:
     	#Ascii BOMB 'B'
     	
     	li $s1, 'B'
-    	li $s2, 0xB7 #Yellow/Gray
+    	setColor(YELLOW, GRAY, $s2)
     	
     	add $t0, $0, $0
     	lw $t1, smiley_eC_Size
@@ -176,13 +212,13 @@ smiley:
     		lw $t4, 0($t3)
     		lw $t5, 4($t3)
     		
-    		updateCellDisp($t4, $t5, $s1, $s2)
+    		updateCellDisplay($t4, $t5, $s1, $s2)
     		
     		addi $t0, $t0, 2
     		j s_drawEyes
     	s_beginDrawMouth:
     		li $s1, 'E'
-    		li $s2, 0x1F #Red/White
+    		setColor(RED, WHITE, $s2)
     	
     		add $t0, $0, $0
     		lw $t1, smiley_sC_Size
@@ -196,7 +232,7 @@ smiley:
     			lw $t4, 0($t3)
     			lw $t5, 4($t3)
     		
-    			updateCellDisp($t4, $t5, $s1, $s2)
+    			updateCellDisplay($t4, $t5, $s1, $s2)
     		
     			addi $t0, $t0, 2
     		j s_drawMouth
@@ -577,21 +613,155 @@ load_map:
 ##############################
 
 init_display:
-    #Define your code here
-    jr $ra
+    
+    #Loop through all cell displays and set to hidden.
+    
+    #t0 = row, t1 = col, t2 = 10 (Whjere to stop loop)
+    #char = null_char
+    #color {bg = gf = gray}
+    li $s0, '\0'
+    setColor(GRAY, GRAY, $s1)
+    add $t0, $0, $0 #t0 = 0
+    addi $t2, $0, 10 #t2 = 10
+    init_display_outer_loop:
+    	beq $t0, $t2, init_display_setCursor
+    	
+    	#Init col = t1 = 0
+    	add $t1, $0, $0
+    	init_display_inner_loop:
+    		beq $t1, $t2, init_display_outer_incr
+		
+		#t0 = row, t1 = col
+		#Set display to hidden cell color
+		updateCellDisplay($t0, $t1, $s0, $s1) #row, col, char, color
+		
+		#Increment the inner loop
+		addi $t1, $t1, 1 #Increment column by 1
+		j init_display_inner_loop
+	init_display_outer_incr:
+		#Increment the outer loop
+		addi $t0, $t0, 1 #Increment row by 1
+		j init_display_outer_loop
+    init_display_setCursor:
+    	
+    	#Cursor cell-pos will have a yellow bg and gray fg, char still $s0
+    	
+    	setColor(YELLOW, GRAY, $s1)
+    	lw $t0, cursor_row #t0 = crow
+    	lw $t1, cursor_col #t1 = ccol
+    	
+    	updateCellDisplay($t0, $t1, $s0, $s1) #row,col,char,color
+    	j init_display_exit
+    init_display_exit:
+    	jr $ra
 
 set_cell:
-    #Define your code here
-    ############################################
-    # DELETE THIS CODE. Only here to allow main program to run without fully implementing the function
-    li $v0, -200
-    ###########################################
-    jr $ra
+    
+    #a0 = row
+    #a1 = col
+    #a2 = char
+    #a3 = fg
+    #0($sp) = bg (load the byte not the word)
+    
+    move $s0, $a0
+    move $s1, $a1
+    move $s2, $a2
+    move $s3, $a3
+    lb $s4, 0($sp)
+    
+    #Param checks:
+    
+    # 0 <= row <= 9
+    bltz $s0, set_cell_invalid
+    bgt $s0, 9, set_cell_invalid
+    # 0 <= col <= 9
+    bltz $s1, set_cell_invalid
+    bgt $s1, 9, set_cell_invalid
+    # 0 <= bg <= 15
+    bltz $s4, set_cell_invalid
+    bgt $s4, 15, set_cell_invalid
+    # 0 <= fg <= 15
+    bltz $s3, set_cell_invalid
+    bgt $s3, 15, set_cell_invalid
+    
+    #s5 = color (bg & fg)
+    bindColorValues($s4, $s3, $s5) #bg, fg, color
+    
+    #Update the display with the new display info
+    updateCellDisplay($s0, $s1, $s2, $s5) #row, col, char, color
+    
+    add $v0, $0, $0 #Successful return
+    j set_cell_exit
+    
+    set_cell_invalid:
+    	addi $v0, $0, -1 #Invalid return
+    	j set_cell_exit
+    
+    set_cell_exit:
+    	jr $ra
 
 reveal_map:
-    #Define your code here
-    jr $ra
-
+    
+    #s0 = return address
+    #s1 = a0 = game_status(1,0,-1)
+    #s2 = a1 = cells_array pointer
+    move $s0, $ra
+    move $s1, $a0
+    move $s2, $a1
+    
+    #Check game status:
+    bgtz $s1, reveal_map_win #Go to smiley if game status is = 1
+    beqz $s1, reveal_map_inProg #Exit reveal map function, the game is still in progress. game status = 0
+    bltz $s1, reveal_map_loss #Go to map reveal if game status = -1
+    
+    reveal_map_win:
+    	#Only need to save $s0
+    	addi $sp, $sp, -4
+    	sw $s0, 0($sp) #Store saved return address.
+    	
+    	#Jump to smiley function
+    	jal smiley
+    	
+    	lw $s0, 0($sp) #Load the saved return address.
+    	addi $sp, $sp, 4
+    	j reveal_map_exit
+    	
+    reveal_map_inProg:
+    	#Do nothing, just exit function
+    	j reveal_map_exit
+    
+    reveal_map_loss:
+    	
+    	#Place exploded bomb at cursor location
+    	#Red background, white foreground
+    	lw $a0, cursor_row #Load row
+    	lw $a1, cursor_col #Load col
+    	li $a2, 'E' #Explosion character
+    	li $a3, BRIGHT_RED
+    	addi $sp, $sp, -4
+    	sw $a3, 0($sp) #Store background value on stack
+    	li $a3, WHITE
+    	
+    	#Set the cells display
+    	jal set_cell
+    	
+    	addi $sp, $sp, 4
+    	
+    	#t0 = row, t1 = col
+    	rm_outer_loop:
+    		
+    		rm_inner_loop:
+    		
+    		
+    		
+    		
+    		
+    		rm_outer_loop_inc:
+    	
+    	rm_loop_end:
+    reveal_map_exit:
+    	move $ra, $s0 #Take back return address pointer from saved pointer
+    	jr $ra
 
 ##############################
 # PART 4 FUNCTIONS
