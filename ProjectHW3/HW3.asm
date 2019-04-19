@@ -33,8 +33,8 @@ newLine: .asciiz "\n"
 .eqv BLUE 0x04
 .eqv MAGENTA 0x05
 .eqv CYAN 0x06 
-.eqv GRAY 0x07
-.eqv DARK_GRAY 0x08 
+.eqv GREY 0x07
+.eqv DARK_GREY 0x08 
 .eqv BRIGHT_RED 0x09 
 .eqv BRIGHT_GREEN 0x0A 
 .eqv YELLOW 0x0B 
@@ -46,7 +46,7 @@ newLine: .asciiz "\n"
 
 .macro printChar(%ch)
 	li $v0, 11
-	la $a0, %ch
+	move $a0, %ch
 	syscall
 .end_macro
 
@@ -64,7 +64,7 @@ newLine: .asciiz "\n"
 
 .macro printInt(%i)
 	li $v0, 1
-	la $a0, %i
+	move $a0, %i
 	syscall
 .end_macro
 
@@ -72,6 +72,12 @@ newLine: .asciiz "\n"
 	li $v0, 1
 	move $a0, %i
 	syscall
+.end_macro
+
+.macro getCellIndex(%row, %col, %index)
+	li $a0, 10#temp
+	mul %index $a0, %row #index = row*10
+	add %index, %index, %col #index = row*10 + col
 .end_macro
 
 .macro updateCellDisplay(%row, %col, %char, %color)
@@ -149,6 +155,19 @@ newLine: .asciiz "\n"
 	
 	or %color, $a2, $a1 #%color = [bg - 4bits][fg - 4bits] (Combined value)
 .end_macro
+
+.macro printCoord(%row, %col)
+	printNewLine()
+	li $t9, 0x28
+	printChar($t9)
+	printInt(%row)
+	li $t9, 0x2C
+	printChar($t9)
+	printInt(%col)
+	li $t9, 0x29
+	printChar($t9)
+	printNewLine()
+.end_macro
 #place any additional data declarations here
 
 #############################################
@@ -198,7 +217,7 @@ smiley:
     	#Ascii BOMB 'B'
     	
     	li $s1, 'B'
-    	setColor(YELLOW, GRAY, $s2)
+    	setColor(YELLOW, GREY, $s2)
     	
     	add $t0, $0, $0
     	lw $t1, smiley_eC_Size
@@ -620,7 +639,7 @@ init_display:
     #char = null_char
     #color {bg = gf = gray}
     li $s0, '\0'
-    setColor(GRAY, GRAY, $s1)
+    setColor(GREY, GREY, $s1)
     add $t0, $0, $0 #t0 = 0
     addi $t2, $0, 10 #t2 = 10
     init_display_outer_loop:
@@ -646,7 +665,7 @@ init_display:
     	
     	#Cursor cell-pos will have a yellow bg and gray fg, char still $s0
     	
-    	setColor(YELLOW, GRAY, $s1)
+    	setColor(YELLOW, GREY, $s1)
     	lw $t0, cursor_row #t0 = crow
     	lw $t1, cursor_col #t1 = ccol
     	
@@ -738,27 +757,210 @@ reveal_map:
     	lw $a1, cursor_col #Load col
     	li $a2, 'E' #Explosion character
     	li $a3, BRIGHT_RED
-    	addi $sp, $sp, -4
+    	#BG - val must be saved on top of stack
+    	#Save registers / place bg val for set_cell at first address on stack.
+    	#s0 - return pointer / s2 - cell_arrays
+    	addi $sp, $sp, -12 
     	sw $a3, 0($sp) #Store background value on stack
     	li $a3, WHITE
+    	
+    	#Save pointers below
+    	sw $s0, 4($sp) #-save return pointer
+    	sw $s2, 8($sp) #-save cells_array address
     	
     	#Set the cells display
     	jal set_cell
     	
-    	addi $sp, $sp, 4
+    	#Load save registers
+    	lw $s1, 8($sp) #Now using s1 as cells_array, no use of game status anymore.
+    	lw $s0, 4($sp)
+    	#No need to load back the bg-val
+    	addi $sp, $sp, 12
     	
-    	#t0 = row, t1 = col
+    	
+    	#Loop through every cell in game and if hidden, show the cell display color-char
+    	
+    	#SAVED REGISTER LIST FROM HERE DOWN
+    	#s0 - return
+    	#s1 - cells_array
+    	
+    	#t0 = row, t1 = col, t2 = 10
+    	add $t0, $0, $0 #t0 = 0
+    	addi $t2, $0, 10 #t2 = 10 
     	rm_outer_loop:
-    		
+    		beq $t0, $t2, rm_loop_end #Finished with loop.
+    		add $t1, $0, $0, #Init t1(col)
     		rm_inner_loop:
+    			beq $t1, $t2, rm_outer_loop_inc
     		
-    		
-    		
-    		
-    		
+    			#t0 - row / t1 - col \ DON'T TOUCH T2 IN HERE
+    			
+    			#Get index in cell array
+    			#- Multiply row by 10 - add col to the sum
+    			li $t3, 10
+    			mul $t3, $t0, $t3 #t3 = row*10
+    			add $t3, $t3, $t1 #t3 = 10*row + col
+    			add $t3, $t3, $s1 #t3 = cells_array + index
+    			
+    			#Get Game-Info byte
+    			lb $t4, 0($t3) #t4 = *cells_array[index]
+    			
+			
+    			
+    			#Check for flag - Display bomb/flag -{correct(bomb at f pos) / incorrect(no bomb at f pos)}
+    			andi $t5, $t4, 0x30
+    			add $t6, $0, $0 #t6 = isBadFlag (0:false)
+    			beq $t5, 0x30, rm_setFlag #If t5 = 0011 0000 flag placed at good spot
+    			beq $t5, 0x10, rm_setFlagBad #If t5 = 0001 0000 flag placed at bad spot
+    			
+    			#Check for if shown
+    			andi $t5, $t4, 0x40
+    			beq $t5, 0x40, rm_inner_loop_inc #If it's already shown, no point in wasting time and memory
+    			
+    			#Check for bomb
+    			andi $t5, $t4, 0x20
+    			beq $t5, 0x20, rm_setBomb #If t5 = 0010 0000 only bomb
+    			
+    			#Display cell bomb number
+    			andi $t5, $t4, 0x0F
+    			beq $t5, 0x00, rm_setEmpty #If no bomb# data it must be empty
+    			#t5 contains the number of bombs at the cell location
+    			#Add +0x30 (0x30 in ascii is '0'
+    			addi $t5, $t5, 0x30 #t5 now = ascii num
+    			
+    			#a0 - row, a1 - col, a2 - char, a3 - fg val, (sp) - bg val
+    			move $a0, $t0
+    			move $a1, $t1
+    			move $a2, $t5 #Our char to display
+    			li $a3, BLACK #bg val
+    			addi $sp, $sp, -24 #6 reg to save and store
+    			sw $a3, 0($sp) #Store bg-val
+    			li $a3, BRIGHT_MAGENTA #fg-val
+    			
+    			#Save registers
+    			sw $s0, 4($sp)
+    			sw $s1, 8($sp)
+    			sw $t0, 12($sp)
+    			sw $t1, 16($sp)
+    			sw $t2, 20($sp)
+    			
+    			jal set_cell
+    			
+    			lw $t2, 20($sp)
+    			lw $t1, 16($sp)
+    			lw $t0, 12($sp)
+    			lw $s1, 8($sp)
+    			lw $s0, 4($sp)
+    			
+    			addi $sp, $sp, 24 #Bring the stack back up
+    			
+    			#Finished with revealing cell, go to inc.
+    			j rm_inner_loop_inc
+    			
+    			rm_setFlag:
+    				move $a0, $t0 #row
+    				move $a1, $t1, #col
+    				li $a2, 'F' #Flag charatcer
+    				
+    				#t6 = isBadFlag
+    				beqz $t6, setF_good
+    				setF_bad:
+    					li $a3, BRIGHT_RED #bg val
+    					j bg_onStack
+    				setF_good:
+    					li $a3, BRIGHT_GREEN #bg val	
+    					j bg_onStack
+    				bg_onStack:
+    					addi $sp, $sp, -24 #6 registers
+    					sw $a3, 0($sp) #bg is first value on stack
+    					li $a3, BRIGHT_BLUE #fg val
+    					
+    					#Save registers (5)
+    					sw $s0, 4($sp)
+    					sw $s1, 8($sp)
+    					sw $t0, 12($sp)
+    					sw $t1, 16($sp)
+    					sw $t2, 20($sp)
+    					
+    					jal set_cell
+    					
+    					#Load saved-registers(5)
+    					lw $t2, 20($sp)
+    					lw $t1, 16($sp)
+    					lw $t0, 12($sp)
+    					lw $s1, 8($sp)
+    					lw $s0, 4($sp)
+    					addi $sp, $sp, 24
+    					j rm_inner_loop_inc
+    					
+    			rm_setFlagBad:
+    				addi $t6, $0, 1 #t6 = isBadFlag = true
+    				j rm_setFlag		
+    			
+    			rm_setBomb:
+    				#bg black, fg grey, ch = B
+    				move $a0, $t0 #row
+    				move $a1, $t1 #col
+    				li $a2, 'B' #B for Bomb
+    				li $a3, BLACK #bg val
+    				addi $sp, $sp, -24 #6 registers to save total
+    				sw $a3, 0($sp) #Store bg-val on stack
+    				li $a3, GREY #a3 = fg-val
+    				
+    				#Save registers (5)
+    				sw $s0, 4($sp)
+    				sw $s1, 8($sp)
+    				sw $t0, 12($sp)
+    				sw $t1, 16($sp)
+    				sw $t2, 20($sp)
+    					
+    				jal set_cell
+    					
+    				#Load saved-registers(5)
+    				lw $t2, 20($sp)
+    				lw $t1, 16($sp)
+    				lw $t0, 12($sp)
+    				lw $s1, 8($sp)
+    				lw $s0, 4($sp)
+    				addi $sp, $sp, 24
+    				j rm_inner_loop_inc
+    					
+    			rm_setEmpty:
+    				#ch = \0, bg = black, fg = white
+    				move $a0, $t0 #row
+    				move $a1, $t1 #col
+    				li $a2, '\0' #Null Char
+    				li $a3, BLACK
+    				addi $sp, $sp, -24
+    				sw $a3, 0($sp) #bg-val on stack
+    				li $a3, WHITE #a3 = fg val now
+    				
+    				#Save registers (5)
+    				sw $s0, 4($sp)
+    				sw $s1, 8($sp)
+    				sw $t0, 12($sp)
+    				sw $t1, 16($sp)
+    				sw $t2, 20($sp)
+    					
+    				jal set_cell
+    					
+    				#Load saved-registers(5)
+    				lw $t2, 20($sp)
+    				lw $t1, 16($sp)
+    				lw $t0, 12($sp)
+    				lw $s1, 8($sp)
+    				lw $s0, 4($sp)
+    				addi $sp, $sp, 24
+    				j rm_inner_loop_inc
+    				
+    			rm_inner_loop_inc:
+    				addi $t1, $t1, 1 #Increment -> col++
+    			    	j rm_inner_loop	
     		rm_outer_loop_inc:
-    	
+    			addi $t0, $t0, 1 #Increment -> row*10
+    			j rm_outer_loop
     	rm_loop_end:
+    		j reveal_map_exit
     reveal_map_exit:
     	move $ra, $s0 #Take back return address pointer from saved pointer
     	jr $ra
@@ -768,28 +970,734 @@ reveal_map:
 ##############################
 
 perform_action:
-    #Define your code here
-    ############################################
-    # DELETE THIS CODE. Only here to allow main program to run without fully implementing the function
-    li $v0, -200
-    ##########################################
-    jr $ra
+    #a1 = user input char
+    #a0 = cells_array
+    move $s0, $ra
+    move $s1, $a0 #cells_array
+    move $s2, $a1 #user input
+    
+    #Load cursor values
+    lw $t0, cursor_row
+    lw $t1, cursor_col
+    
+    add $t2, $t0, $0 #previous row
+    add $t3, $t1, $0 #previous col
+    
+    #Check user input
+    #Check forward movement
+    beq $s2, 0x57, pAction_forward #W
+    beq $s2, 0x77, pAction_forward #w
+    
+    #Check backward movement
+    beq $s2, 0x53, pAction_backward #S
+    beq $s2, 0x73, pAction_backward #s
+    
+    #Check left movement
+    beq $s2, 0x41, pAction_left #A
+    beq $s2, 0x61, pAction_left #a
+    
+    #Check right movement
+    beq $s2, 0x44, pAction_right #D
+    beq $s2, 0x64, pAction_right #d
+    
+    #Check toggle flag
+    beq $s2, 0x46, pAction_fToggle #F
+    beq $s2, 0x66, pAction_fToggle #f
+    
+    #Check for toggle reveal
+    beq $s2, 0x52, pAction_rToggle #R
+    beq $s2, 0x72, pAction_rToggle #r
+    
+    pAction_forward:
+    	beqz $t0, pAction_invalidMove
+    	
+    	#Set cursor to cursor_row - 1
+    	addi $t0, $t0, -1
+    	j pAction_updateCursor
+    pAction_backward:
+    	beq $t0, 9, pAction_invalidMove
+    	
+    	#Set cursor to cursor_row +1
+    	addi $t0, $t0, 1
+    	j pAction_updateCursor
+    pAction_left:
+    	beqz $t1, pAction_invalidMove
+    	
+    	#Set cursor to cursor_col - 1
+    	addi $t1, $t1, -1
+    	j pAction_updateCursor
+    pAction_right:
+    	beq $t1, 9, pAction_invalidMove
+    	
+    	#Set cursor to cursor_COL +1
+    	addi $t1, $t1, 1
+    	j pAction_updateCursor
+    pAction_fToggle:
+    		
+    		#No use of t2 and t3
+    		li $t2, 10 #temp
+    		mul $t2, $t2, $t0 #row*10
+    		add $t2, $t2, $t1 #row*10 + col = index
+    		add $t3, $t2, $s1
+    		
+    		lb $t2, 0($t3) #cell_array[index] = game_data
+    		
+    		andi $t5, $t2, 0x40
+    		beq $t5, 0x40, pAction_invalidMove #Check to make sure we arent trying to flag a revealed cell
+    		
+    		andi $t4, $t2, 0x10 #Wether flag is placed or not
+    		andi $t5, $t2, 0x6F #Retrieve all bits except flag bit
+    		beq $t4, 0x10, toggleFlagOff
+    		j toggleFlagOn
+    		
+    		toggleFlagOn:
+    			
+    			ori $t6, $t5, 0x10 #Flag bit enabled
+    			sb $t6, 0($t3)
+    			#Set flag cell
+    			
+    			#GREY BACKGROUND BRIGHT_BLUE FOREGROUND 'F'
+    			move $a0, $t0 #row
+    			move $a1, $t1 #col
+    			li $a2, 'F'
+    			li $a3, GREY
+    			addi $sp, $sp, -24
+    			sw $a3, 0($sp) #bg-val
+    			li $a3, BRIGHT_BLUE #fg-val
+    			j f_set_cell_and_save
+    		toggleFlagOff:
+    			
+    			sb $t5, 0($t3)
+    			#set hidden cell
+    			#GREY BACKGROUND BRIGHT_BLUE FOREGROUND 'F'
+    			move $a0, $t0 #row
+    			move $a1, $t1 #col
+    			li $a2, '\0'
+    			li $a3, YELLOW
+    			addi $sp, $sp, -24
+    			sw $a3, 0($sp) #bg-val
+    			li $a3, GREY #fg-val
+    			j f_set_cell_and_save
+    		f_set_cell_and_save:
+    			
+    			sw $s0, 4($sp)
+    			sw $s1, 8($sp)
+    			sw $s2, 12($sp)
+    			sw $t0, 16($sp)
+    			sw $t1, 20($sp)
+    			
+    			jal set_cell
+    			
+    			lw $t1, 20($sp)
+    			lw $t0, 16($sp)
+    			lw $s2, 12($sp)
+    			lw $s1, 8($sp)
+    			lw $s0, 4($sp)
+    			addi $sp, $sp, 24
+    			add $v0, $0, $0
+    			j pAction_exit
+    			
+    			
+    pAction_rToggle:
+    	
+    	li $t2, 10 #temp
+    	mul $t2, $t2, $t0 #row*10
+    	add $t2, $t2, $t1 #row*10 + col
+    	add $t2, $t2, $s1 #cells_array + offset
+    	
+    	lb $t3, 0($t2) #game_data
+    	
+    	andi $t4, $t3, 0x10
+    	beq $t4, 0x10, rToggle_flagOff
+    	
+    	andi $t4, $t3, 0x80 #Check if shown
+    	beq $t4, 0x80, pAction_invalidMove #Cant reveal an already revealed cell
+    	
+    	j rToggle_revealCell
+    	
+    	rToggle_flagOff:
+    		andi $t4, $t3, 0x6F #Get all used bits except flag bit
+    		sb $t4, 0($t2)
+    		j rToggle_revealCell
+    	rToggle_revealCell:
+    		
+    		andi $t4, $t3, 0xFF
+    		ori $t4, $t4, 0x40
+    		sb $t4, 0($t2)
+    		
+    		move $a0, $t0
+    		move $a1, $t1
+    		
+    		andi $t4, $t3, 0x10 #Check if flag
+    		beq $t4, 0x10, rToggle_revealCell_f
+    		
+    		andi $t4, $t3, 0x20 #Check if bomb
+    		#If bomb, return 0.. game status will handle revealing bomb
+    		add $v0, $0, $0
+    		beq $t4, 0x20, pAction_exit
+    		
+    		andi $t4, $t3, 0x0F #Check for numbers
+    		beqz $t4, rToggle_revealCell_e
+    		
+    		addi $a2, $t4, 0x30 #Convert to ascii number
+    		
+    		li $a3, BLACK
+    		addi $sp, $sp, -16
+    		sw $a3, 0($sp)
+    		li $a3, BRIGHT_MAGENTA
+    		
+    		j rToggle_revealCell_save
+    		rToggle_revealCell_f:
+    			
+    			li $a2, 'F'
+    			li $a3, GREY
+    			addi $sp, $sp, -16
+       			sw $a3, 0($sp)
+    			li $a3, BRIGHT_BLUE
+    			j rToggle_revealCell_save
+    		rToggle_revealCell_e:
+    			
+    			li $a2, '\0'
+    			li $a3, BLACK
+    			addi $sp, $sp, -16
+    			sw $a3, 0($sp)
+    			li $a3, WHITE
+    			
+    			j rToggle_revealCell_save
+    		
+    		rToggle_revealCell_save:
+    			
+    			sw $s0, 4($sp)
+    			sw $s1, 8($sp)
+    			sw $s2, 12($sp)
+    			
+    			jal set_cell
+    			
+    			#Call search cell
+    			
+    			lw $a0, 8($sp)
+    			lw $a1, cursor_row
+    			lw $a2, cursor_col
+    			
+    			jal search_cells
+    			
+    			lw $s2, 12($sp)
+    			lw $s1, 8($sp)
+    			lw $s0, 4($sp)
+    			
+    			addi $sp, $sp, 16
+    			add $v0, $0, $0
+    			j pAction_exit
+    pAction_updateCursor:
+    	#Update previous cursor loc
+    	li $t4, 10 #temp var
+    	mul $t4, $t2, $t4 #t4 = previous-row*10
+    	add $t4, $t4, $t3 #t4 = offset = previous_row*10 + previous_column
+    	
+    	add $t4, $t4, $s1 #tf = cells_array + offset
+    	
+    	lb $t5, 0($t4) #t5 = cell_game_data
+    	
+    	andi $t6, $t5, 0x40 #if t6 = 0x40, cell is revealed
+    	beq $t6, 0x40, pa_updateRevealed
+    	
+    	andi $t6, $t5, 0x10 #Check for flag
+    	beq $t6, 0x10, pa_updateFlagged
+    	
+    	j pa_updateHidden
+    	
+    		pa_updateRevealed:
+    			
+    			#Only 3 possible cells being revealed previously: empty cell, number cell, or flagged cell
+    			
+    			#Check for empty cell
+    			andi $t6, $t5, 0x0F #if t6 != 0, it's a number cell. if not then it is an empty cell
+    			beqz $t6, pa_updateEmpty
+    			
+    			j pa_updateNumber
+    			
+    			pa_updateNumber:
+    				#Change number into ascii number
+    				
+    				addi $t6, $t6, 0x30 #number to ascii
+    				
+    				#BLACK BACKGROUND BRIGHT_MAGENTA FOREGROUND 'ascii number'
+    				move $a0, $t2 #row
+    				move $a1, $t3 #col
+    				move $a2, $t6 #t6 = ascii number char
+    				li $a3, BLACK
+    				addi $sp, $sp, -24
+    				sw $a3, 0($sp) #bg-val
+    				li $a3, BRIGHT_MAGENTA #fg-val
+    				j pc_update_saveRegs
+    			pa_updateFlagged:
+    				#GREY BACKGROUND BRIGHT_BLUE FOREGROUND 'F'
+    				move $a0, $t2 #row
+    				move $a1, $t3 #col
+    				li $a2, 'F'
+    				li $a3, GREY
+    				addi $sp, $sp, -24
+    				sw $a3, 0($sp) #bg-val
+    				li $a3, BRIGHT_BLUE #fg-val
+    				j pc_update_saveRegs
+    			pa_updateEmpty:
+    				#BLACK BACKGROUND WHITE FOREGROUND \0
+    				move $a0, $t2 #row
+    				move $a1, $t3 #col
+    				li $a2, '\0'
+    				li $a3, BLACK
+    				addi $sp, $sp, -24
+    				sw $a3, 0($sp) #bg-val
+    				li $a3, WHITE #fg-val
+    				j pc_update_saveRegs
+    		pa_updateHidden:
+    			#GREY BACKGROUND and FOREGROUND with char \0
+    			move $a0, $t2 #row
+    			move $a1, $t3 #col
+    			li $a2, '\0'
+    			li $a3, GREY #bg-val and fg val
+    			addi $sp, $sp, -24
+    			sw $a3, 0($sp) #store bg-val
+    			j pc_update_saveRegs
+    			
+    		pc_update_saveRegs:
+    			#store 3 saved registers and 2 temporaries. do not need t2-t3 anymore
+    			sw $s0, 4($sp)
+    			sw $s1, 8($sp)
+    			sw $s2, 12($sp)
+    			sw $t0, 16($sp)
+    			sw $t1, 20($sp)
+    			
+    			jal set_cell
+    			
+    			lw $t1, 20($sp)
+    			lw $t0, 16($sp)
+    			lw $s2, 12($sp)
+    			lw $s1, 8($sp)
+    			lw $s0, 4($sp)
+    			
+    			addi $sp, $sp, 24
+    			
+    	#Update new cursor loc
+    	move $a0, $t0 #current row
+    	move $a1, $t1 #current col
+    	la $a2, '\0'
+    	li $a3, YELLOW #bg-val
+    	addi $sp, $sp, -24 #4 registers to save
+    	sw $a3, 0($sp) #bg - val on stack
+    	li $a3, GREY #foregorund val
+        
+        #Save registers
+        sw $s0, 4($sp)
+        sw $s1, 8($sp)
+        sw $s2, 12($sp)
+        sw $t0, 16($sp)
+        sw $t1, 20($sp)
+        
+        jal set_cell
+        
+        #Load saved-registers
+        lw $t1, 20($sp)
+        lw $t0, 16($sp)
+        lw $s2, 12($sp)
+        lw $s1, 8($sp)
+        lw $s0, 4($sp)
+        
+        
+        sw $t0, cursor_row
+        sw $t1, cursor_col
+        add $v0, $0, $0
+        j pAction_exit
+        
+    pAction_invalidMove:
+    	addi $v0, $0, -1 #Invalid code
+    	j pAction_exit
+    pAction_exit:
+    	move $ra, $s0
+    	jr $ra
 
 game_status:
-    #Define your code here
-    ############################################
-    # DELETE THIS CODE. Only here to allow main program to run without fully implementing the function
-    li $v0, -200
-    ##########################################
-    jr $ra
+    #a0 = cells_array
+    move $s0, $ra
+    move $s1, $a0
+    
+    #Check if lost (bomb at cursor)
+    lw $t0, cursor_row
+    lw $t1, cursor_col
+    
+    li $t2, 10 #temp
+    mul $t2, $t2, $t0 #t2 = row*10
+    add $t2, $t2, $t1 #t2 = row*10 + col
+    
+    add $t3, $t2, $s1 #cells_array + index
+    lb $t2, ($t3) #cells_array[index] = game_data
+    
+    andi $t4, $t2, 0x40 #Hidden/shown bit
+    beq $t4, 0x40, game_status_checkBomb
+    j game_status_loop_check
+    game_status_checkBomb:
+    	andi $t4, $t2, 0x20
+    	beq $t4, 0x20, game_status_lost
+    game_status_loop_check:
+    #To win, flags must be placed on only bombs. Cells must be revealed
+    
+    add $t0, $0, $0 #row = 0
+    addi $t2, $0, 10
+    add $t3, $0, $0 #Number of bombs
+    add $t4, $0, $0 #Number of flags
+    
+    
+    game_status_outer_loop:
+    	beq $t0, $t2, game_status_loop_done
+    	
+    	add $t1, $0, $0 #col = 0
+    	game_status_inner_loop:
+    		beq $t1, $t2, game_status_outer_inc
+    		
+    		#Process cell here
+    		
+    		li $t5, 10 #temp
+    		mul $t5, $t5, $t0 #row*10
+    		add $t5, $t5, $t1 #row*10 + col = index
+    		
+    		add $t5, $t5, $s1 #cells_array + index
+    		lb $t6, 0($t5) #game_data
+    		
+    		andi $t7, $t6, 0x30 #bomb + flag
+    		beq $t7, 0x30, status_addFlaggedBomb
+    		beq $t7, 0x20, status_addBomb
+    		beq $t7, 0x10, status_addFlag
+    		
+    		andi $t7, $t6, 0x40 #Get the shown/hidden bit
+    		beqz $t7, status_cell_Hidden
+    		
+    		status_addFlaggedBomb:
+    			addi $t3, $t3, 1 #bomb++
+    			addi $t4, $t4, 1 #flag++
+    			j game_status_inner_inc
+    		status_addBomb:
+    			addi $t3, $t3, 1 #bomb++
+    			j game_status_inner_inc
+    		status_addFlag:
+    			addi $t4, $t4, 1 #flag++
+    			j game_status_inner_inc
+    		
+    		status_cell_Hidden:
+    			#If there is a hidden cell and it's not a flag/bomb game_status = 0
+    			j game_status_inGame
+    		#############
+    		game_status_inner_inc:
+    			addi $t1, $t1, 1 #col++
+    			j game_status_inner_loop
+    		
+    	game_status_outer_inc:
+    		addi $t0, $t0, 1 #row++
+    		j game_status_outer_loop
+    	
+    game_status_loop_done:
+        
+        #If number of flags > number of bombs game = lost
+        #If number of bombs = number of flags game = win
+        #If number of flags < number of bombs game = still going
+        beq $t3, $t4, game_status_win
+        bgt $t4, $t3, game_status_lost
+        j game_status_inGame
+    game_status_lost:
+    	addi $v0, $0, -1
+    	j game_status_exit
+    	
+    game_status_win:
+    	addi $v0, $0, 1
+    	j game_status_exit
+    	
+    game_status_inGame:
+    	add $v0, $0, $0
+    	j game_status_exit
+    
+    game_status_exit:
+    	move $ra, $s0
+    	jr $ra
 
 ##############################
 # PART 5 FUNCTIONS
 ##############################
 
 search_cells:
-    #Define your code here
-    jr $ra
-
+    #a0 = cells
+    #a1 = row
+    #a2 = col
+    
+    move $s0, $ra
+    move $s1, $a0
+    move $s2, $a1
+    move $s3, $a2
+    
+    add $fp, $sp, $0 #fp = sp
+    addi $sp, $sp, -8 #push stack
+    sw $s2, 0($sp)
+    sw $s3, 4($sp)
+    search_cells_whileLoop:
+    	beq $fp, $sp, search_cells_whileLoop_done
+    	
+    	lw $t0, 0($sp)
+    	lw $t1, 4($sp)
+    	addi $sp, $sp, 8 #pop stack
+    	
+    	printCoord($t0, $t1)
+    	
+    	getCellIndex($t0, $t1, $t2)
+    	add $t2, $t2, $s1 #cells_array + index
+    	lb $t3, 0($t2)
+    	
+    	andi $t4, $t3, 0x10 #Check if flagged
+    	beqz $t4, search_cells_reveal
+    	j search_cells_bombNum0
+    	search_cells_reveal:
+    		#Either a number cell or an empty cell
+    		andi $t4, $t3, 0x0F
+    		beqz $t4, search_cells_reveal_empty
+    		j search_cells_reveal_numbers
+    		
+    		search_cells_reveal_empty:
+    			#Black bg, white fg, \0 char
+    			move $a0, $t0
+    			move $a1, $t1
+    			li $a2, '\0'
+    			li $a3, BLACK#bg
+    			addi $sp, $sp, -28
+    			sw $a3, 0($sp)#bg on stack
+    			li $a3, WHITE#fg
+    			j search_cells_reveal_
+    		search_cells_reveal_numbers:
+    			#Black bg, Bright_magenta fg, ascii number
+    			move $a0, $t0
+    			move $a1, $t1
+    			addi $t4, $t4, 0x30 #convert number to ascii number
+    			move $a2, $t4
+    			li $a3, BLACK #bg
+    			addi $sp, $sp, -28
+    			sw $a3, 0($sp)#bg on stack
+    			li $a3, BRIGHT_MAGENTA #fg
+    			j search_cells_reveal_
+    		search_cells_reveal_:
+    			
+    			#Mark as revealed
+    			andi $t4, $t3, 0xFF
+    			ori $t4, $t4, 0x40
+    			sb $t4, 0($t2)
+    			
+    			#Save regs
+    			sw $s0, 4($sp)
+    			sw $s1, 8($sp)
+    			sw $s2, 12($sp)
+    			sw $s3, 16($sp)
+    			sw $t0, 20($sp)
+    			sw $t1, 24($sp)
+    			
+    			jal set_cell
+    			
+    			lw $t1, 24($sp)
+    			lw $t0, 20($sp)
+    			lw $s3, 16($sp)
+    			lw $s2, 12($sp)
+    			lw $s1, 8($sp)
+    			lw $s0, 4($sp)
+    			addi $sp, $sp, 28
+    			j search_cells_bombNum0
+    	search_cells_bombNum0:
+    		getCellIndex($t0, $t1, $t2) #t0 = row, t1 = col, t2 = cells_array + index
+    		add $t2, $t2, $s1
+    		lb $t3, 0($t2) #game_data
+    		andi $t4, $t3, 0x0F
+    		beqz $t4, search_cells_bombNum0_reveal
+    		
+    		j search_cells_whileLoop #Jump back to iterator
+    		
+    		search_cells_bombNum0_reveal:
+    			#if row + 1 < 10
+    			rowp1:
+    				addi $t2, $t0, 1 #row + 1
+    				blt $t2, 10, rowp1_hidden
+    				j colp1
+    				#cell[row+1][col].isHidden
+    				rowp1_hidden:
+    					getCellIndex($t2, $t1, $t3) #t3 = index
+    					add $t3, $t3, $s1 #t3 = cells_array[index]
+    					lb $t4, 0($t3)
+    					andi $t5, $t4, 0x40 #Check if isHidden
+    					beqz $t5, rowp1_notFlagged
+    					j colp1
+    					rowp1_notFlagged:
+    						#!cell[row+1][col].isFlag
+    						andi $t5, $t4, 0x10 #Check if it has a flag
+    						beq $t5, 0x10, colp1 #Onto next nested if
+    						#Else, increase stack
+    						addi $sp, $sp, -8
+    						sw $t2, 0($sp)
+    						sw $t1, 4($sp)
+    						j colp1
+    			colp1:
+    				addi $t2, $t1, 1 #col + 1
+    				blt $t2, 10, colp1_hidden
+    				j rowm1
+    				#cell[row][col+1].isHidden
+    				colp1_hidden:
+    					getCellIndex($t0, $t2, $t3) #t3 = index
+    					add $t3, $t3, $s1 #t3 = cells_array[index]
+    					lb $t4, 0($t3)
+    					andi $t5, $t4, 0x40 #Check if isHidden
+    					beqz $t5, colp1_notFlagged
+    					j rowm1
+    					colp1_notFlagged:
+    						#!cell[row][col+1].isFlag
+    						andi $t5, $t4, 0x10 #Check if it has a flag
+    						beq $t5, 0x10, rowm1 #Onto next nested if
+    						#Else, increase stack
+    						addi $sp, $sp, -8
+    						sw $t0, 0($sp)
+    						sw $t2, 4($sp)
+    						j rowm1
+    			rowm1:
+    				addi $t2, $t0, -1 #row - 1
+    				bgez $t2, rowm1_hidden
+    				j colm1
+    				#cell[row-1][col].isHidden
+    				rowm1_hidden:
+    					getCellIndex($t2, $t1, $t3) #t3 = index
+    					add $t3, $t3, $s1 #t3 = cells_array[index]
+    					lb $t4, 0($t3)
+    					andi $t5, $t4, 0x40 #Check if isHidden
+    					beqz $t5, rowm1_notFlagged
+    					j colm1
+    					rowm1_notFlagged:
+    						#!cell[row-1][col].isFlag
+    						andi $t5, $t4, 0x10 #Check if it has a flag
+    						beq $t5, 0x10, colm1 #Onto next nested if
+    						#Else, increase stack
+    						addi $sp, $sp, -8
+    						sw $t2, 0($sp)
+    						sw $t1, 4($sp)
+    						j colm1
+    						
+    			colm1:
+    				addi $t2, $t1, -1 #col - 1
+    				bgez $t2, colm1_hidden
+    				j rowm1colm1
+    				#cell[row][col+1].isHidden
+    				colm1_hidden:
+    					getCellIndex($t0, $t2, $t3) #t3 = index
+    					add $t3, $t3, $s1 #t3 = cells_array[index]
+    					lb $t4, 0($t3)
+    					andi $t5, $t4, 0x40 #Check if isHidden
+    					beqz $t5, colm1_notFlagged
+    					j rowm1colm1
+    					colm1_notFlagged:
+    						#!cell[row][col-1].isFlag
+    						andi $t5, $t4, 0x10 #Check if it has a flag
+    						beq $t5, 0x10, rowm1colm1 #Onto next nested if
+    						#Else, increase stack
+    						addi $sp, $sp, -8
+    						sw $t0, 0($sp)
+    						sw $t2, 4($sp)
+    						j rowm1colm1
+    			rowm1colm1:
+    				addi $t2, $t0, -1 #row - 1
+    				addi $t3, $t1, -1 #col - 1
+    				bgez $t2, rowm1colm1_colCheck
+    				j rowm1colp1
+    				rowm1colm1_colCheck:
+    					bgez $t3, rowm1colm1_hidden
+    					j rowm1colp1 
+    					rowm1colm1_hidden:
+    						getCellIndex($t2, $t3, $t4) #t4 = index
+    						add $t4, $t4, $s1 #cells_array[index]
+    						lb $t5, 0($t4)
+    						andi $t6, $t5, 0x40 #Check if is Shown/Hidden
+    						beqz $t6 rowm1colm1_notFlagged
+    						j rowm1colp1
+    						rowm1colm1_notFlagged:
+    							#Check for flag
+    							andi $t6, $t5, 0x10 #flag bit
+    							beq $t6, 0x10, rowm1colp1
+    							#Else
+    							addi $sp, $sp, -8
+    							sw $t2, 0($sp)
+    							sw $t3, 4($sp)
+    							j rowm1colp1
+    			rowm1colp1:
+    				addi $t2, $t0, -1 #row - 1
+    				addi $t3, $t1, 1 #col + 1
+    				bgez $t2, rowm1colp1_colCheck
+    				j rowp1colm1
+    				rowm1colp1_colCheck:
+    					blt $t3, 10, rowm1colp1_hidden
+    					j rowp1colm1
+    					rowm1colp1_hidden:
+    						getCellIndex($t2, $t3, $t4) #t4 = index
+    						add $t4, $t4, $s1 #cells_array[index]
+    						lb $t5, 0($t4)
+    						andi $t6, $t5, 0x40 #Check if is Shown/Hidden
+    						beqz $t6, rowm1colp1_notFlagged
+    						j rowp1colm1
+    						rowm1colp1_notFlagged:
+    							#Check for flag
+    							andi $t6, $t5, 0x10 #flag bit
+    							beq $t6, 0x10, rowp1colm1
+    							#Else
+    							addi $sp, $sp, -8
+    							sw $t2, 0($sp)
+    							sw $t3, 4($sp)
+    							j rowp1colm1
+    			rowp1colm1:
+    				addi $t2, $t0, 1 #row + 1
+    				addi $t3, $t1, -1 #col - 1
+    				blt $t2, 10, rowp1colm1_colCheck
+    				j rowp1colp1
+    				rowp1colm1_colCheck:
+    					bgez, $t3, rowp1colm1_hidden
+    					j rowp1colp1
+    					rowp1colm1_hidden:
+    						getCellIndex($t2, $t3, $t4) #t4 = index
+    						add $t4, $t4, $s1 #cells_array[index]
+    						lb $t5, 0($t4)
+    						andi $t6, $t5, 0x40 #Check if is Shown/Hidden
+    						beqz $t6 rowp1colm1_notFlagged
+    						j rowp1colp1
+    						rowp1colm1_notFlagged:
+    							#Check for flag
+    							andi $t6, $t5, 0x10 #flag bit
+    							beq $t6, 0x10, rowp1colp1
+    							#Else
+    							addi $sp, $sp, -8
+    							sw $t2, 0($sp)
+    							sw $t3, 4($sp)
+    							j rowp1colp1
+    			rowp1colp1:
+    				addi $t2, $t0, 1 #row + 1
+    				addi $t3, $t1, 1 #col + 1
+    				blt $t2, 10, rowp1colp1_colCheck
+    				j search_cells_whileLoop
+    				rowp1colp1_colCheck:
+    					blt $t3, 10, rowp1colp1_hidden
+    					j search_cells_whileLoop
+    					rowp1colp1_hidden:
+    						getCellIndex($t2, $t3, $t4) #t4 = index
+    						add $t4, $t4, $s1 #cells_array[index]
+    						lb $t5, 0($t4)
+    						andi $t6, $t5, 0x40 #Check if is Shown/Hidden
+    						beqz $t6, rowp1colp1_notFlagged
+    						j search_cells_whileLoop
+    						rowp1colp1_notFlagged:
+    							#Check for flag
+    							andi $t6, $t5, 0x10 #flag bit
+    							beq $t6, 0x10, search_cells_whileLoop
+    							#Else
+    							addi $sp, $sp, -8
+    							sw $t2, 0($sp)
+    							sw $t3, 4($sp)
+    							j search_cells_whileLoop
+    search_cells_whileLoop_done:
+    	move $ra, $s0
+    	jr $ra
 #####################################################################
 
