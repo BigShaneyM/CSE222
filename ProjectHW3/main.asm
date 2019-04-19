@@ -22,8 +22,6 @@ cells_array: .space 100
 
 main:
 
-	jal smiley
-	j exit
 	# store the filename given on the command line
 	load_args()
 
