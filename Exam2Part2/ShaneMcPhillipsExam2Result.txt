@@ -1,0 +1,6 @@
+Name: Shane McPhillips
+
+        No. of Students	Fail	Pass	Average
+=================================================================
+SectionA:	12	3	9	75
+SectionB:	11	3	8	74
